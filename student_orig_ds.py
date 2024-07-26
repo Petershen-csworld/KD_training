@@ -47,7 +47,7 @@ def get_args():
 
     parser.add_argument("--dataset_path",
                         type=  str,
-                        default = "../../dataset/pytorch_datasets",
+                        default = "/home/shenhaoyu/dataset/pytorch_datasets",
                         help = "The place where dataset is stored.")
     
     # training stuff
@@ -63,7 +63,7 @@ def get_args():
 
     parser.add_argument("--t_init",
                         type = str,
-                        default = "../../dataset/model_zoo/pretrained_teacher/vgg13/vgg13_CIFAR10_seed_3407best.pth",
+                        default = "/home/shenhaoyu/dataset/model_zoo/pretrained_teacher/vgg13/vgg13_CIFAR10_seed_3407best.pth",
                         help = "Path of teacher model.")
     
 
@@ -108,12 +108,12 @@ def get_args():
 
     parser.add_argument("--model_saving_path",
                         type = str,
-                        default = "../../dataset/model_zoo/distilled_student_orig",
+                        default = "/home/shenhaoyu/dataset/model_zoo/distilled_student_orig",
                         help = "The place for saving optimized model.")
     
     parser.add_argument("--logging_saving_path",
                         type = str,
-                        default = "../../dataset/logging",
+                        default = "/home/shenhaoyu/dataset/logging",
                         help = "The place for saving logging.")
     
     parser.add_argument('--save_freq', 

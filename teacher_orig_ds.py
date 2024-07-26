@@ -1,8 +1,3 @@
-"""
-2024/07/09
-Haoyu Shen
--------
-"""
 import argparse
 import csv
 from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform
@@ -29,99 +24,113 @@ import datetime
 def get_args():
     parser = argparse.ArgumentParser()
 
+    # Random seed for reproducibility
     parser.add_argument("--seed",
                         type=int,
                         default=34,
                         help="The random seed.")
 
+    # Batch size for training
     parser.add_argument("--batch_size",
                         type=int,
                         default=64,
                         help="The batch size used for training.")
 
+    # Frequency of printing logs
     parser.add_argument("--print_freq",
                         type=int,
                         default=100,
                         help="The print frequency.")
-    # dataset
+
+    # Dataset selection
     parser.add_argument("--dataset",
                         type=str,
                         default="CIFAR100",
                         help="CIFAR10/CIFAR100/Imagenet, Specify the dataset to train on.")
 
+    # Path to the dataset
     parser.add_argument("--dataset_path",
                         type=str,
                         default="/home/shenhaoyu/dataset/pytorch_datasets",
                         help="The place where dataset is stored.")
 
-    # training stuff
+    # Model name
     parser.add_argument("--model_name",
                         type=str,
                         default="vgg13",
                         help="TODO:CHANGE THIS TO CHOICE!")
 
+    # Number of training epochs
     parser.add_argument("--epoch",
                         type=int,
                         default=240,
-                        help="Training epoch."
-                        )
-    # optimizer
+                        help="Training epoch.")
+
+    # Optimizer type
     parser.add_argument("--optimizer",
                         type=str,
                         default="SGD",
                         help="The optimizer type.")
 
+    # Learning rate for the optimizer
     parser.add_argument("--lr",
                         type=float,
                         default=0.05,
                         help="The learning rate for optimizer.")
 
+    # Weight decay (L2 regularization term)
     parser.add_argument("--weight_decay",
                         type=float,
                         default=5e-4,
                         help="The weight decay(L2 regularization term) for optimizer.")
 
+    # Momentum for the optimizer
     parser.add_argument("--momentum",
                         type=float,
                         default=0.9,
                         help="The momentum for optimizer.")
 
+    # Epochs where learning rate should decay
     parser.add_argument('--lr_decay_epochs',
                         type=str,
                         default='150,180,210',
                         help='Where to decay lr, can be a list.')
 
+    # Decay rate for the learning rate
     parser.add_argument('--lr_decay_rate',
                         type=float,
                         default=10,
                         help='decay rate for learning rate.')
 
-    # saving stuff
-
+    # Model saving path
     parser.add_argument("--model_saving_path",
                         type=str,
                         default="/home/shenhaoyu/dataset/model_zoo/pretrained_teacher",
                         help="The place for saving optimized model.")
 
+    # Logging saving path
     parser.add_argument("--logging_saving_path",
                         type=str,
                         default="/home/shenhaoyu/dataset/logging",
                         help="The place for saving logging.")
 
+    # Frequency of saving the model
     parser.add_argument('--save_freq',
                         type=int,
                         default=40,
                         help='Saving frequency')
 
+    # Augmentation type
     parser.add_argument('--aug',
                         type=str,
                         default=None,
                         help="Augmentation type")
+
+    # Parse the arguments
     opt = parser.parse_args()
     return opt
 
-
-"""From https://gist.github.com/ihoromi4/b681a9088f348942b01711f251e5f964"""
+# Function to set all random seeds for reproducibility
 
 
 def seed_everything(seed: int):
@@ -149,12 +158,16 @@ def main(opt: argparse.Namespace):
     logger.addHandler(file_handler)
     logger.info(opt)
 
+    # Set random seed
     seed = opt.seed
     seed_everything(seed)
+
+    # Timer for estimating training time
     timer = Timer(opt.epoch)
     best_acc = 0
     best_acc_epoch = 0
 
+    # Configuring wandb for tracking experiments
     config = {
         "task": "pretraining",
         "seed": opt.seed,
@@ -170,6 +183,7 @@ def main(opt: argparse.Namespace):
     wandb.init(project=f"Pretraining Teacher Model {opt.model_name} {opt.dataset}",
                config=config)
 
+    # Load dataset and transformations
     if opt.dataset == "CIFAR100":
         n_cls = 100
         img_size = 32
@@ -191,6 +205,7 @@ def main(opt: argparse.Namespace):
     else:
         raise NotImplementedError(opt.dataset)
 
+    # Initialize model from the model dictionary
     model = model_dict[opt.model_name](num_classes=n_cls, img_size=img_size)
 
     # ======= Set up the optimizer =======
@@ -210,15 +225,21 @@ def main(opt: argparse.Namespace):
     else:
         raise NotImplementedError(opt.optimizer)
 
+    # Loss function
     criterion = torch.nn.CrossEntropyLoss()
 
+    # Move model and criterion to GPU if available
     if torch.cuda.is_available():
         model = model.to("cuda")
         criterion = criterion.cuda()
         cudnn.benchmark = True
+
+    # Create directory for saving models if it does not exist
     os.makedirs(opt.model_saving_path, exist_ok=True)
+
     # ======= training! =======
     for epoch in range(1, opt.epoch + 1):
+        # Adjust learning rate according to schedule
         adjust_learning_rate(epoch, opt, optimizer)
 
         for param_group in optimizer.param_groups:
@@ -228,11 +249,13 @@ def main(opt: argparse.Namespace):
 
         time1 = time.time()
 
+        # Train for one epoch
         train_acc, train_loss = train(
             epoch, train_loader, model, criterion, optimizer, opt)
         time2 = time.time()
         logger.info('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
 
+        # Validate the model
         test_acc, test_acc_top5, test_loss = validate(
             test_loader, model, criterion, opt)
 
@@ -255,6 +278,8 @@ def main(opt: argparse.Namespace):
                                                                                      opt.seed))
             print('saving the best model!')
             torch.save(state, save_model)
+
+        # Log metrics to wandb
         wandb.log({
             "Acc1": test_acc,
             "Acc5": test_acc_top5,
@@ -285,6 +310,7 @@ def main(opt: argparse.Namespace):
     # The results reported in the paper/README is from the last epoch.
     print('best accuracy:', best_acc)
 
+    # Save results to a CSV file
     csv_path = os.path.join(save_model_dir, 'result.csv')
     try:
         pd.read_csv(csv_path)
@@ -294,19 +320,15 @@ def main(opt: argparse.Namespace):
             writer.writerow(["time", "seed", "epoch", "lr",
                             "weight_decay", "dataset", "model_name", "best_acc"])
     with open(csv_path, 'a+', newline='') as csvfile:
-      # Your CSV writing operations here
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow([datetime.datetime.now(), opt.seed, opt.epoch, opt.lr,
                            opt.weight_decay, opt.dataset, opt.model_name, best_acc.cpu().detach().item()])
+
+    # Finish wandb logging
     wandb.finish()
 
 
+# Entry point of the script
 if __name__ == "__main__":
     opt = get_args()
     main(opt)
-
-
-# TODO 2024/07/11
-# ADD csv to store accuracy_score
-# ADD wandb to track experiment
-# TRAIN wrn model

@@ -15,6 +15,7 @@ import random
 import argparse
 from PIL import Image
 import gc
+import json
 
 
 def get_args():
@@ -83,19 +84,19 @@ def generate(opt):
     os.makedirs(saving_folder, exist_ok=True)
 
     # Model ID for the diffusion pipeline
-    model_id = "stabilityai/stable-diffusion-xl-base-1.0"
+    model_id = "/home/shenhaoyu/dataset/stabilityai/stable-diffusion-xl-base-1.0"
     torch_device = "cuda:" + str(gpu_id)
 
     # Load the base and refiner diffusion pipelines
     base = DiffusionPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-xl-base-1.0",
+        "/home/shenhaoyu/dataset/stabilityai/stable-diffusion-xl-base-1.0",
         torch_dtype=torch.float16,
         variant="fp16",
         use_safetensors=True
     ).to(torch_device)
 
     refiner = DiffusionPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-xl-refiner-1.0",
+        "/home/shenhaoyu/dataset/stabilityai/stable-diffusion-xl-refiner-1.0",
         text_encoder_2=base.text_encoder_2,
         vae=base.vae,
         torch_dtype=torch.float16,
@@ -104,10 +105,16 @@ def generate(opt):
     ).to(torch_device)
 
     # Compile the U-Nets for performance optimization
+
+    # Ahead-of-time compilation is a process where the model's operations are analyzed and optimized
+    # before the model is run. This is in contrast to just-in-time (JIT) compilation, where the
+    # optimizations happen during execution. AOT compilation can lead to better performance because
+    # the optimizations are done once, and the optimized code can then be reused for multiple runs.
     torch.compile(base.unet, mode="reduce-overhead", fullgraph=True)
     torch.compile(refiner.unet, mode="reduce-overhead", fullgraph=True)
 
     # Set up the random generator for the given GPU
+    # Generators are used to control the randomness in PyTorch, such as when generating random numbers or shuffling data.
     generator = torch.Generator(device="cuda:" + str(gpu_id)).manual_seed(seed)
 
     # Directory for saving generated results
@@ -153,7 +160,6 @@ def generate(opt):
         names = ["airplane", "automobile", "bird", "cat",
                  "deer", "dog", "frog", "horse", "ship", "truck"]
     elif opt.dataset == "CIFAR100":
-        import json
         with open("./dataset/cifar100.json", "r") as f:
             idx_to_label = json.load(f)
             names = [item for key, item in idx_to_label.items()]
@@ -161,42 +167,51 @@ def generate(opt):
 
     n_cls = len(names)
 
-    # Generate images for each class
+    # Loop through each class to generate images
     for i in range(n_cls):
-        name = names[i]
+        name = names[i]  # Get the name of the current class
+        # Create a subdirectory path for the current class
         subdir = os.path.join(result_dir, name)
+        # Create the subdirectory if it doesn't exist
         os.makedirs(subdir, exist_ok=True)
-        generated_image = 0
+        generated_image = 0  # Initialize the counter for generated images
 
-        # Check for existing images in the directory
+        # Check if there are existing images in the directory
         if len(os.listdir(subdir)) > 0:
             for subimage in os.listdir(subdir):
+                # Extract the number from the image file name and update the counter
                 num = int(subimage.replace(".jpg", ""))
                 generated_image = max(generated_image, num + 1)
 
         # Generate images in batches
         for idx, batch in enumerate(range((scale - generated_image) // batch_size)):
             # Generate initial images with the base pipeline
-            image = base(prompt=[random.choice(fixed_format).format(name) for _ in range(batch_size)],
-                         num_inference_steps=15,
-                         denoising_end=0.8,
-                         guidance_scale=guidance_scale,
-                         generator=generator,
-                         output_type="latent").images
+            image = base(
+                prompt=[random.choice(fixed_format).format(name) for _ in range(
+                    batch_size)],  # Create prompts for image generation
+                num_inference_steps=15,  # Number of inference steps for the base pipeline
+                denoising_end=0.8,  # End denoising after 80% of the steps
+                guidance_scale=guidance_scale,  # Scale for guidance
+                generator=generator,  # Random number generator for reproducibility
+                output_type="latent"  # Output type is latent
+            ).images
 
             # Refine the generated images
-            image = refiner(prompt=[random.choice(fixed_format).format(name) for _ in range(batch_size)],
-                            num_inference_steps=15,
-                            denoising_start=0.8,
-                            guidance_scale=guidance_scale,
-                            image=image).images
+            image = refiner(
+                prompt=[random.choice(fixed_format).format(name) for _ in range(
+                    batch_size)],  # Create prompts for refining the images
+                num_inference_steps=15,  # Number of inference steps for the refiner pipeline
+                denoising_start=0.8,  # Start denoising from 80% of the steps
+                guidance_scale=guidance_scale,  # Scale for guidance
+                image=image  # Input the previously generated images for refinement
+            ).images
 
             # Save the generated images
             for j, img in enumerate(image):
                 img.save(os.path.join(
-                    subdir, f"{idx * batch_size + j + generated_image}.jpg"))
+                    subdir, f"{idx * batch_size + j + generated_image}.jpg"))  # Save each image with a unique filename
 
-            # Collect garbage and empty GPU cache
+            # Collect garbage and empty GPU cache to manage memory usage
             gc.collect()
             torch.cuda.empty_cache()
 

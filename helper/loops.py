@@ -12,14 +12,13 @@ from utils import AverageMeter, accuracy
 
 
 def mixup_data(x, y, opt, alpha=0.4):
-
     '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
     lam = np.random.beta(alpha, alpha)
 
     batch_size = x.size()[0]
     index = torch.randperm(batch_size).cuda(opt.gpu)
 
-    mixed_x = lam * x + (1 - lam) * x[index,:]
+    mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
     return mixed_x, y_a, y_b, lam
 
@@ -91,26 +90,13 @@ def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
                   'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                   'Acc@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                   epoch, idx, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1, top5=top5))
-            
+                      epoch, idx, len(train_loader), batch_time=batch_time,
+                      data_time=data_time, loss=losses, top1=top1, top5=top5))
+
             sys.stdout.flush()
     opt.prob = []
     print(opt.prob)
     return top1.avg, losses.avg
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def validate(val_loader, model, criterion, opt):
@@ -144,141 +130,185 @@ def validate(val_loader, model, criterion, opt):
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            
+
     return top1.avg, top5.avg, losses.avg
 
 
+# Function to train the model using knowledge distillation
+def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dict=None):
+    batch_time = AverageMeter()  # Initialize meter to track batch processing time
+    data_time = AverageMeter()   # Initialize meter to track data loading time
+    cls_losses = AverageMeter()  # Initialize meter to track classification losses
+    kd_losses = AverageMeter()   # Initialize meter to track knowledge distillation losses
+    top1 = AverageMeter()        # Initialize meter to track top-1 accuracy
+    top5 = AverageMeter()        # Initialize meter to track top-5 accuracy
 
+    snet = nets['snet']  # Student network
+    tnet = nets['tnet']  # Teacher network
 
-# epoch, train_loader, model, criterion, optimizer, opt
-def train_distill(epoch, train_loader, nets,  criterions, optimizer, opt, map_dict = None):
-	batch_time = AverageMeter()
-	data_time  = AverageMeter()
-	cls_losses = AverageMeter()
-	kd_losses  = AverageMeter()
-	top1       = AverageMeter()
-	top5       = AverageMeter()
+    # Classification loss function
+    criterionCls = criterions['criterionCls']
 
-	snet = nets['snet']
-	tnet = nets['tnet']
+    # Knowledge distillation loss function
+    criterionKD = criterions['criterionKD']
 
-	criterionCls = criterions['criterionCls']
-	criterionKD  = criterions['criterionKD']
+    snet.train()  # Set the student network to training mode
+    end = time.time()  # Record the current time
 
-	snet.train()
-	end = time.time()
-	for i, (img, target) in enumerate(train_loader, start=1):
-		data_time.update(time.time() - end)
-		img = img.cuda(non_blocking=True)
-		target = target.cuda(non_blocking=True)
+    # Iterate over the training data
+    for i, (img, target) in enumerate(train_loader, start=1):
+        data_time.update(time.time() - end)  # Update data loading time
+        img = img.cuda(non_blocking=True)  # Move images to GPU
+        target = target.cuda(non_blocking=True)  # Move targets to GPU
 
+        out_s = snet(img)  # Forward pass through student network
+        out_t = tnet(img)  # Forward pass through teacher network
 
-		out_s = snet(img)
-		out_t = tnet(img)
-		if opt.aug is None:
-			cls_loss = criterionCls(out_s, target)
-			if opt.kd_mode in ['logits', 'st']:
-				kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
-			else:
-				raise Exception('Invalid kd mode...')
-			loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
-		else:
-			if opt.aug == "diffmix":
-				label_arr = target.cpu().numpy()
-				label_1, label_2 = torch.LongTensor([map_dict[i][0] for i in label_arr]).cuda(), torch.LongTensor([map_dict[i][1] for i in label_arr]).cuda()
-				lam = 0.5
-				cls_loss = criterionCls(out_s, label_1) #lam * criterionCls(out_s, label_1) + (1 - lam) * criterionCls(out_s, label_2)
-				if opt.kd_mode in ['logits', 'st']:
-					kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
-					loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
-				else:
-					raise Exception('Invalid kd mode...')
-		prec1, prec5 = accuracy(out_s, target, topk=(1,5))
-		cls_losses.update(cls_loss.item(), img.size(0))
-		kd_losses.update(kd_loss.item(), img.size(0))
-		top1.update(prec1.item(), img.size(0))
-		top5.update(prec5.item(), img.size(0))
+        if opt.aug is None:  # If no augmentation is specified
+            # Compute the classification loss between the student network's output and the target labels
+            cls_loss = criterionCls(out_s, target)
 
-		optimizer.zero_grad()
-		loss.backward()
-		optimizer.step()
+            # Check the knowledge distillation mode and compute the corresponding KD loss
+            if opt.kd_mode in ['logits', 'st']:
+                # Compute KD loss with detached teacher output
 
-		batch_time.update(time.time() - end)
-		end = time.time()
+                # Create a new tensor that shares the same data as the original tensor,
+                # but does not compute gradients during backpropagation
+                kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
+            else:
+                # Raise an exception if an invalid KD mode is specified
+                raise Exception('Invalid kd mode...')
 
-		if i % opt.print_freq == 0:
-			log_str = ('Epoch[{0}]:[{1:03}/{2:03}] '
-					   'Time:{batch_time.val:.4f} '
-					   'Data:{data_time.val:.4f}  '
-					   'Cls:{cls_losses.val:.4f}({cls_losses.avg:.4f})  '
-					   'KD:{kd_losses.val:.4f}({kd_losses.avg:.4f})  '
-					   'prec@1:{top1.val:.2f}({top1.avg:.2f})  '
-					   'prec@5:{top5.val:.2f}({top5.avg:.2f})'.format(
-					   epoch, i, len(train_loader), batch_time=batch_time, data_time=data_time,
-					   cls_losses=cls_losses, kd_losses=kd_losses, top1=top1, top5=top5))
-			print(log_str)
-	    # here we calculate the 
-		logit_t = out_t 
-		p = F.softmax(logit_t, dim = -1)
-		# p is output probability of logit t
-		opt.prob  += [p] # [batch_size, num_classes]
-		opt.entropy += [(-p * torch.log(p)).sum(dim = -1)] # [batch_size]
-		num = 10
-		if len(opt.prob) >= num:
-			prob = torch.cat(opt.prob, dim = 0)
-			entropy = torch.cat(opt.entropy, dim = 0)
-			avg_prob = prob.mean(dim = 0)
-			opt.all_avg_prob += [avg_prob]
-			opt.prob = [] # reset
-			
-			all_avg_prob = torch.stack(opt.all_avg_prob, dim = 0) #[num, num_classes]
-			avg_prob_std = all_avg_prob.std(dim=0)
-			std_str = '%.6f' % avg_prob_std.mean().item()
-			if i % opt.print_freq == 0:
-				print(f'Check T prob: NumOfSampledStd {len(opt.all_avg_prob)} Epoch {epoch}  MeanStd {std_str} MeanEntropy {entropy.mean().item():.6f}')
-	
-	return top1.avg, top5.avg, cls_losses.avg, kd_losses.avg, avg_prob_std.mean().item(), entropy.mean().item()
+            # Combine the classification loss and KD loss using the lambda_kd weight
+            loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
+        else:  # If augmentation is specified
+            if opt.aug == "diffmix":  # Check if the augmentation method is "diffmix"
+                # Convert target labels to numpy array
+                label_arr = target.cpu().numpy()
 
+                # Map the target labels to two different sets of labels for "diffmix"
+                label_1, label_2 = torch.LongTensor([map_dict[i][0] for i in label_arr]).cuda(
+                ), torch.LongTensor([map_dict[i][1] for i in label_arr]).cuda()
 
-        
+                lam = 0.5  # Set lambda value for mixing
+
+                # Compute the classification loss using the first set of mapped labels
+                cls_loss = criterionCls(out_s, label_1)
+
+                # Check the knowledge distillation mode and compute the corresponding KD loss
+                if opt.kd_mode in ['logits', 'st']:
+                    # Compute KD loss with detached teacher output
+                    kd_loss = criterionKD(
+                        out_s, out_t.detach()) * opt.lambda_kd
+
+                    # Combine the classification loss and KD loss using the lambda_kd weight
+                    loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
+                else:
+                    # Raise an exception if an invalid KD mode is specified
+                    raise Exception('Invalid kd mode...')
+
+        prec1, prec5 = accuracy(
+            out_s, target, topk=(1, 5))  # Compute accuracies
+
+        # Update classification loss
+        cls_losses.update(cls_loss.item(), img.size(0))
+        kd_losses.update(kd_loss.item(), img.size(0))  # Update KD loss
+        top1.update(prec1.item(), img.size(0))  # Update top-1 accuracy
+        top5.update(prec5.item(), img.size(0))  # Update top-5 accuracy
+
+        optimizer.zero_grad()  # Zero the gradients
+        loss.backward()  # Backpropagate the loss
+        optimizer.step()  # Update the model parameters
+
+        batch_time.update(time.time() - end)  # Update batch processing time
+        end = time.time()  # Record the current time
+
+        # Print log information at specified intervals
+        if i % opt.print_freq == 0:
+            log_str = ('Epoch[{0}]:[{1:03}/{2:03}] '
+                       'Time:{batch_time.val:.4f} '
+                       'Data:{data_time.val:.4f}  '
+                       'Cls:{cls_losses.val:.4f}({cls_losses.avg:.4f})  '
+                       'KD:{kd_losses.val:.4f}({kd_losses.avg:.4f})  '
+                       'prec@1:{top1.val:.2f}({top1.avg:.2f})  '
+                       'prec@5:{top5.val:.2f}({top5.avg:.2f})'.format(
+                           epoch, i, len(train_loader), batch_time=batch_time, data_time=data_time,
+                           cls_losses=cls_losses, kd_losses=kd_losses, top1=top1, top5=top5))
+            print(log_str)
+
+        # Calculate and log the probabilities and entropy for the teacher model
+
+        # Logits are the unnormalized output values of the last layer (usually a fully connected layer) of
+        # a neural network model. They are the raw scores before applying activation functions (such as softmax).
+        # These logits can be used to calculate the probability output and loss value of the model.
+        logit_t = out_t  # Get the teacher model logits
+        # Compute the softmax probabilities from the logits
+        p = F.softmax(logit_t, dim=-1)
+        # Store the computed probabilities in the opt.prob list
+        opt.prob += [p]
+        # Compute and store the entropy values for each probability distribution
+        opt.entropy += [(-p * torch.log(p)).sum(dim=-1)]
+
+        num = 10  # Number of samples to use for calculating statistics
+        if len(opt.prob) >= num:
+            # Concatenate all stored probabilities along the batch dimension
+            prob = torch.cat(opt.prob, dim=0)
+            # Concatenate all stored entropy values along the batch dimension
+            entropy = torch.cat(opt.entropy, dim=0)
+            # Calculate the average probability distribution
+            avg_prob = prob.mean(dim=0)
+            # Store the average probability distribution in opt.all_avg_prob
+            opt.all_avg_prob += [avg_prob]
+            opt.prob = []  # Reset the probability list for the next batch of samples
+
+            # Stack all average probabilities into a tensor
+            all_avg_prob = torch.stack(opt.all_avg_prob, dim=0)
+            # Compute the standard deviation of the average probabilities
+            avg_prob_std = all_avg_prob.std(dim=0)
+            # Format the mean standard deviation as a string
+            std_str = '%.6f' % avg_prob_std.mean().item()
+            if i % opt.print_freq == 0:  # Check if the current iteration is at the specified print frequency
+                # Print the statistics including the number of sampled standard deviations, epoch, mean standard deviation, and mean entropy
+                print(
+                    f'Check T prob: NumOfSampledStd {len(opt.all_avg_prob)} Epoch {epoch}  MeanStd {std_str} MeanEntropy {entropy.mean().item():.6f}')
+
+    # Return the average metrics
+    return top1.avg, top5.avg, cls_losses.avg, kd_losses.avg, avg_prob_std.mean().item(), entropy.mean().item()
 
 
 def validate_distill(test_loader, nets, criterions, opt):
-	cls_losses = AverageMeter()
-	kd_losses  = AverageMeter()
-	top1       = AverageMeter()
-	top5       = AverageMeter()
+    cls_losses = AverageMeter()
+    kd_losses = AverageMeter()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
 
-	snet = nets['snet']
-	tnet = nets['tnet']
+    snet = nets['snet']
+    tnet = nets['tnet']
 
-	criterionCls = criterions['criterionCls']
-	criterionKD  = criterions['criterionKD']
+    criterionCls = criterions['criterionCls']
+    criterionKD = criterions['criterionKD']
 
-	snet.eval()
-	end = time.time()
-	for _, (img, target) in enumerate(test_loader):
-		img = img.cuda()
-		target = target.cuda()
+    snet.eval()
+    end = time.time()
+    for _, (img, target) in enumerate(test_loader):
+        img = img.cuda()
+        target = target.cuda()
 
-		out_s = snet(img)
-		out_t = tnet(img)
-		cls_loss = criterionCls(out_s, target)
-		if opt.kd_mode in ['logits', 'st']:
-			kd_loss  = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
-		else:
-			raise Exception('Invalid kd mode...')
+        out_s = snet(img)
+        out_t = tnet(img)
+        cls_loss = criterionCls(out_s, target)
+        if opt.kd_mode in ['logits', 'st']:
+            kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
+        else:
+            raise Exception('Invalid kd mode...')
 
-		prec1, prec5 = accuracy(out_s, target, topk=(1,5))
-		cls_losses.update(cls_loss.item(), img.size(0))
-		kd_losses.update(kd_loss.item(), img.size(0))
-		top1.update(prec1.item(), img.size(0))
-		top5.update(prec5.item(), img.size(0))
+        prec1, prec5 = accuracy(out_s, target, topk=(1, 5))
+        cls_losses.update(cls_loss.item(), img.size(0))
+        kd_losses.update(kd_loss.item(), img.size(0))
+        top1.update(prec1.item(), img.size(0))
+        top5.update(prec5.item(), img.size(0))
 
-	f_l = [cls_losses.avg, kd_losses.avg, top1.avg, top5.avg]
-	print('Cls: {:.4f}, KD: {:.4f}, Prec@1: {:.2f}, Prec@5: {:.2f}'.format(*f_l))
+    f_l = [cls_losses.avg, kd_losses.avg, top1.avg, top5.avg]
+    print('Cls: {:.4f}, KD: {:.4f}, Prec@1: {:.2f}, Prec@5: {:.2f}'.format(*f_l))
 
-	return top1.avg, top5.avg, cls_losses.avg, kd_losses.avg 
-
-
-
+    return top1.avg, top5.avg, cls_losses.avg, kd_losses.avg

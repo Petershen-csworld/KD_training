@@ -18,6 +18,12 @@ import gc
 
 
 def get_args():
+    """
+    Parse command-line arguments for the script.
+
+    Returns:
+    - opt (Namespace): Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--seed",
@@ -27,52 +33,65 @@ def get_args():
     parser.add_argument("--generated_results",
                         type=str,
                         default="/home/shenhaoyu/dataset/generated",
-                        help="The result for generation.")
-
+                        help="The directory for saving generated results.")
     parser.add_argument("--dataset",
                         type=str,
                         default="CIFAR100",
                         help="Dataset name for synthetic data generation.")
-
     parser.add_argument("--gpu_id",
                         type=int,
                         default=2,
-                        help="The gpu id for training.")
-
+                        help="The GPU id for training.")
     parser.add_argument("--scale",
                         type=int,
                         default=600,
-                        help="The scale factor(# photos of each class).")
-
+                        help="The scale factor (number of photos of each class).")
     parser.add_argument("--batch_size",
                         type=int,
                         default=3,
-                        help="How many images to generate in one shot.")
-
+                        help="How many images to generate in one batch.")
     parser.add_argument("--guidance_scale",
                         type=int,
                         default=7.5,
                         help="Guidance scale for Stable Diffusion.")
+
     opt = parser.parse_args()
     return opt
 
 
 def generate(opt):
+    """
+    Generate synthetic images using a diffusion model.
+
+    Parameters:
+    - opt (Namespace): Command-line arguments.
+    """
     seed = opt.seed
     gpu_id = opt.gpu_id
     scale = opt.scale
     batch_size = opt.batch_size
     guidance_scale = opt.guidance_scale
 
+    # Ensure the scale is divisible by the batch size
     assert scale % batch_size == 0
+
+    # Set random seed for reproducibility
     seed_everything(seed=seed)
+
+    # Create the directory for saving results
     saving_folder = opt.generated_results
     os.makedirs(saving_folder, exist_ok=True)
+
+    # Model ID for the diffusion pipeline
     model_id = "stabilityai/stable-diffusion-xl-base-1.0"
     torch_device = "cuda:" + str(gpu_id)
 
+    # Load the base and refiner diffusion pipelines
     base = DiffusionPipeline.from_pretrained(
-        "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        torch_dtype=torch.float16,
+        variant="fp16",
+        use_safetensors=True
     ).to(torch_device)
 
     refiner = DiffusionPipeline.from_pretrained(
@@ -81,19 +100,21 @@ def generate(opt):
         vae=base.vae,
         torch_dtype=torch.float16,
         use_safetensors=True,
-        variant="fp16",).to(torch_device)
+        variant="fp16"
+    ).to(torch_device)
 
-    #
+    # Compile the U-Nets for performance optimization
     torch.compile(base.unet, mode="reduce-overhead", fullgraph=True)
     torch.compile(refiner.unet, mode="reduce-overhead", fullgraph=True)
 
+    # Set up the random generator for the given GPU
     generator = torch.Generator(device="cuda:" + str(gpu_id)).manual_seed(seed)
-    # use StableDiffusionXLPipeline for generation
 
-    result_dir = opt.generated_results + opt.dataset
+    # Directory for saving generated results
+    result_dir = os.path.join(opt.generated_results, opt.dataset)
     os.makedirs(result_dir, exist_ok=True)
-    # https://huggingface.co/docs/diffusers/en/using-diffusers/reusing_seeds
 
+    # Fixed format strings for image prompts
     fixed_format = [
         "a photo of a {}",
         "a rendering of a {}",
@@ -121,47 +142,61 @@ def generate(opt):
         "a photo of the weird {}",
         "a photo of the large {}",
         "a photo of a cool {}",
-        "a photo of a small {}",
+        "a photo of a small {}"
     ]
 
-    import random
+    # Set the random seed for reproducibility
     random.seed(opt.seed)
-    # https://www.cs.toronto.edu/~kriz/cifar.html
+
+    # Get the class names based on the dataset
     if opt.dataset == "CIFAR10":
         names = ["airplane", "automobile", "bird", "cat",
                  "deer", "dog", "frog", "horse", "ship", "truck"]
     elif opt.dataset == "CIFAR100":
         import json
-        with open("./dataset/cifar100.json", "r+") as f:
+        with open("./dataset/cifar100.json", "r") as f:
             idx_to_label = json.load(f)
             names = [item for key, item in idx_to_label.items()]
             print(names)
+
     n_cls = len(names)
+
+    # Generate images for each class
     for i in range(n_cls):
         name = names[i]
         subdir = os.path.join(result_dir, name)
         os.makedirs(subdir, exist_ok=True)
         generated_image = 0
+
+        # Check for existing images in the directory
         if len(os.listdir(subdir)) > 0:
             for subimage in os.listdir(subdir):
                 num = int(subimage.replace(".jpg", ""))
                 generated_image = max(generated_image, num + 1)
+
+        # Generate images in batches
         for idx, batch in enumerate(range((scale - generated_image) // batch_size)):
+            # Generate initial images with the base pipeline
             image = base(prompt=[random.choice(fixed_format).format(name) for _ in range(batch_size)],
                          num_inference_steps=15,
                          denoising_end=0.8,
                          guidance_scale=guidance_scale,
                          generator=generator,
                          output_type="latent").images
+
+            # Refine the generated images
             image = refiner(prompt=[random.choice(fixed_format).format(name) for _ in range(batch_size)],
                             num_inference_steps=15,
                             denoising_start=0.8,
                             guidance_scale=guidance_scale,
-                            image=image
-                            ).images
+                            image=image).images
+
+            # Save the generated images
             for j, img in enumerate(image):
                 img.save(os.path.join(
                     subdir, f"{idx * batch_size + j + generated_image}.jpg"))
+
+            # Collect garbage and empty GPU cache
             gc.collect()
             torch.cuda.empty_cache()
 

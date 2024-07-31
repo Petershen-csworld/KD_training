@@ -202,6 +202,16 @@ def main(opt: argparse.Namespace):
                                                             test_transform=simple_transform,
                                                             batch_size=opt.batch_size,
                                                             num_workers=8)
+    elif opt.dataset == "BloodMNIST":
+        n_cls = 10
+        img_size = 32
+        simple_transform = cifar10_crop_flip_transform()
+        train_loader, test_loader = get_cifar10_dataloaders(opt.dataset_path,
+                                                            train_transform=simple_transform,
+                                                            test_transform=simple_transform,
+                                                            batch_size=opt.batch_size,
+                                                            num_workers=8)
+    
     else:
         raise NotImplementedError(opt.dataset)
 

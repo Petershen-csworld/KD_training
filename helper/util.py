@@ -4,7 +4,7 @@ from torch.optim import Optimizer
 from utils import get_lr
 
 
-def adjust_learning_rate(epoch, opt, optimizer):
+def adjust_learning_rate(epoch, args, optimizer):
     """
     Adjusts the learning rate of the optimizer based on the current epoch.
 
@@ -13,13 +13,13 @@ def adjust_learning_rate(epoch, opt, optimizer):
 
     Parameters:
     - epoch (int): The current training epoch.
-    - opt (argparse.Namespace): An object containing the command-line arguments or configuration options.
+    - args (argparse.Namespace): An object containing the command-line arguments or configuration options.
       It must have an attribute `lr_decay_epochs`, which is a comma-separated string of epochs at which to decay the learning rate,
       and `lr_decay_rate`, which is the factor by which to decay the learning rate.
     - optimizer (Optimizer): The optimizer whose learning rate will be adjusted.
     """
     # Convert the comma-separated string of decay epochs into a list of integers
-    epoch_array = [int(e) for e in opt.lr_decay_epochs.split(",")]
+    epoch_array = [int(e) for e in args.lr_decay_epochs.split(",")]
 
     # Check if the current epoch is in the list of decay epochs
     if epoch in epoch_array:
@@ -27,7 +27,7 @@ def adjust_learning_rate(epoch, opt, optimizer):
         current_lr = get_lr(optimizer)
 
         # Calculate the new learning rate by dividing the current learning rate by the decay rate
-        new_lr = current_lr / opt.lr_decay_rate
+        new_lr = current_lr / args.lr_decay_rate
 
         # Set the new learning rate for each parameter group in the optimizer
         for param_group in optimizer.param_groups:

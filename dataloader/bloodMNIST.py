@@ -5,10 +5,22 @@ from typing import Tuple
 import os
 import medmnist
 from medmnist import INFO
+import numpy as np
 
 # BloodMNIST mean and std (hypothetical values, replace with actual if available)
 BLOODMNIST_MEAN = [0.5]
 BLOODMNIST_STD = [0.5]
+
+
+
+def collate_fn(batch):
+    inputs, targets = zip(*batch)
+    inputs = torch.stack(inputs, dim=0)
+    # Convert targets to a single NumPy array first
+    targets = np.stack(targets, axis=0)
+    # Convert the NumPy array to a PyTorch tensor
+    targets = torch.from_numpy(targets)
+    return inputs, targets.squeeze(dim=1)  # Squeeze the targets here
 
 
 def get_bloodmnist_dataloaders(root: str = "./data",
@@ -32,9 +44,11 @@ def get_bloodmnist_dataloaders(root: str = "./data",
     #                    download=True, root=root)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size,
-                              shuffle=True, num_workers=num_workers, pin_memory=True)
+                              shuffle=True, num_workers=num_workers, pin_memory=True,
+                              collate_fn=collate_fn)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
-                             num_workers=1 if num_workers == 1 else num_workers // 2, pin_memory=True)
+                             num_workers=1 if num_workers == 1 else num_workers // 2,
+                             pin_memory=True, collate_fn=collate_fn)
     # val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
     #                         num_workers=1 if num_workers == 1 else num_workers // 2, pin_memory=True)
 

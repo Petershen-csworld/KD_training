@@ -11,12 +11,12 @@ import numpy as np
 from utils import AverageMeter, accuracy
 
 
-def mixup_data(x, y, opt, alpha=0.4):
+def mixup_data(x, y, args, alpha=0.4):
     '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
     lam = np.random.beta(alpha, alpha)
 
     batch_size = x.size()[0]
-    index = torch.randperm(batch_size).cuda(opt.gpu)
+    index = torch.randperm(batch_size).cuda(args.gpu)
 
     mixed_x = lam * x + (1 - lam) * x[index, :]
     y_a, y_b = y, y[index]
@@ -47,7 +47,7 @@ def cutmix(data, targets, alpha=0.25):
     return data, None
 
 
-def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
+def train_vanilla(epoch, train_loader, model, criterion, optimizer, args):
     """vanilla training"""
     model.train()
 
@@ -59,11 +59,12 @@ def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
 
     end = time.time()
     for idx, (input, target) in enumerate(train_loader):
+
         data_time.update(time.time() - end)
         input = input.float()
         if torch.cuda.is_available():
-            input = input.cuda()
-            target = target.cuda()
+            input = input.to(args.device)
+            target = target.to(args.device)
 
         output = model(input)
         loss = criterion(output, target)
@@ -83,7 +84,7 @@ def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
         end = time.time()
 
         # Print
-        if idx % opt.print_freq == 0:
+        if idx % args.print_freq == 0:
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
@@ -94,12 +95,12 @@ def train_vanilla(epoch, train_loader, model, criterion, optimizer, opt):
                       data_time=data_time, loss=losses, top1=top1, top5=top5))
 
             sys.stdout.flush()
-    opt.prob = []
-    print(opt.prob)
+    args.prob = []
+    print(args.prob)
     return top1.avg, losses.avg
 
 
-def validate(val_loader, model, criterion, opt):
+def validate(val_loader, model, criterion, args):
     """validation"""
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -112,13 +113,15 @@ def validate(val_loader, model, criterion, opt):
     with torch.no_grad():
         end = time.time()
         for idx, (input, target) in enumerate(val_loader):
+
             input = input.float()
             if torch.cuda.is_available():
-                input = input.cuda()
-                target = target.cuda()
+                input = input.to(args.device)
+                target = target.to(args.device)
 
             # compute output
             output = model(input)
+
             loss = criterion(output, target)
 
             # measure accuracy and record loss
@@ -135,7 +138,7 @@ def validate(val_loader, model, criterion, opt):
 
 
 # Function to train the model using knowledge distillation
-def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dict=None):
+def train_distill(epoch, train_loader, nets, criterions, optimizer, args, map_dict=None):
     batch_time = AverageMeter()  # Initialize meter to track batch processing time
     data_time = AverageMeter()   # Initialize meter to track data loading time
     cls_losses = AverageMeter()  # Initialize meter to track classification losses
@@ -164,25 +167,25 @@ def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dic
         out_s = snet(img)  # Forward pass through student network
         out_t = tnet(img)  # Forward pass through teacher network
 
-        if opt.aug is None:  # If no augmentation is specified
+        if args.aug is None:  # If no augmentation is specified
             # Compute the classification loss between the student network's output and the target labels
             cls_loss = criterionCls(out_s, target)
 
             # Check the knowledge distillation mode and compute the corresponding KD loss
-            if opt.kd_mode in ['logits', 'st']:
+            if args.kd_mode in ['logits', 'st']:
                 # Compute KD loss with detached teacher output
 
                 # Create a new tensor that shares the same data as the original tensor,
                 # but does not compute gradients during backpropagation
-                kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
+                kd_loss = criterionKD(out_s, out_t.detach()) * args.lambda_kd
             else:
                 # Raise an exception if an invalid KD mode is specified
                 raise Exception('Invalid kd mode...')
 
             # Combine the classification loss and KD loss using the lambda_kd weight
-            loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
+            loss = (1 - args.lambda_kd) * cls_loss + kd_loss
         else:  # If augmentation is specified
-            if opt.aug == "diffmix":  # Check if the augmentation method is "diffmix"
+            if args.aug == "diffmix":  # Check if the augmentation method is "diffmix"
                 # Convert target labels to numpy array
                 label_arr = target.cpu().numpy()
 
@@ -196,13 +199,13 @@ def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dic
                 cls_loss = criterionCls(out_s, label_1)
 
                 # Check the knowledge distillation mode and compute the corresponding KD loss
-                if opt.kd_mode in ['logits', 'st']:
+                if args.kd_mode in ['logits', 'st']:
                     # Compute KD loss with detached teacher output
                     kd_loss = criterionKD(
-                        out_s, out_t.detach()) * opt.lambda_kd
+                        out_s, out_t.detach()) * args.lambda_kd
 
                     # Combine the classification loss and KD loss using the lambda_kd weight
-                    loss = (1 - opt.lambda_kd) * cls_loss + kd_loss
+                    loss = (1 - args.lambda_kd) * cls_loss + kd_loss
                 else:
                     # Raise an exception if an invalid KD mode is specified
                     raise Exception('Invalid kd mode...')
@@ -224,7 +227,7 @@ def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dic
         end = time.time()  # Record the current time
 
         # Print log information at specified intervals
-        if i % opt.print_freq == 0:
+        if i % args.print_freq == 0:
             log_str = ('Epoch[{0}]:[{1:03}/{2:03}] '
                        'Time:{batch_time.val:.4f} '
                        'Data:{data_time.val:.4f}  '
@@ -244,39 +247,39 @@ def train_distill(epoch, train_loader, nets, criterions, optimizer, opt, map_dic
         logit_t = out_t  # Get the teacher model logits
         # Compute the softmax probabilities from the logits
         p = F.softmax(logit_t, dim=-1)
-        # Store the computed probabilities in the opt.prob list
-        opt.prob += [p]
+        # Store the computed probabilities in the args.prob list
+        args.prob += [p]
         # Compute and store the entropy values for each probability distribution
-        opt.entropy += [(-p * torch.log(p)).sum(dim=-1)]
+        args.entropy += [(-p * torch.log(p)).sum(dim=-1)]
 
         num = 10  # Number of samples to use for calculating statistics
-        if len(opt.prob) >= num:
+        if len(args.prob) >= num:
             # Concatenate all stored probabilities along the batch dimension
-            prob = torch.cat(opt.prob, dim=0)
+            prob = torch.cat(args.prob, dim=0)
             # Concatenate all stored entropy values along the batch dimension
-            entropy = torch.cat(opt.entropy, dim=0)
+            entropy = torch.cat(args.entropy, dim=0)
             # Calculate the average probability distribution
             avg_prob = prob.mean(dim=0)
-            # Store the average probability distribution in opt.all_avg_prob
-            opt.all_avg_prob += [avg_prob]
-            opt.prob = []  # Reset the probability list for the next batch of samples
+            # Store the average probability distribution in args.all_avg_prob
+            args.all_avg_prob += [avg_prob]
+            args.prob = []  # Reset the probability list for the next batch of samples
 
             # Stack all average probabilities into a tensor
-            all_avg_prob = torch.stack(opt.all_avg_prob, dim=0)
+            all_avg_prob = torch.stack(args.all_avg_prob, dim=0)
             # Compute the standard deviation of the average probabilities
             avg_prob_std = all_avg_prob.std(dim=0)
             # Format the mean standard deviation as a string
             std_str = '%.6f' % avg_prob_std.mean().item()
-            if i % opt.print_freq == 0:  # Check if the current iteration is at the specified print frequency
+            if i % args.print_freq == 0:  # Check if the current iteration is at the specified print frequency
                 # Print the statistics including the number of sampled standard deviations, epoch, mean standard deviation, and mean entropy
                 print(
-                    f'Check T prob: NumOfSampledStd {len(opt.all_avg_prob)} Epoch {epoch}  MeanStd {std_str} MeanEntropy {entropy.mean().item():.6f}')
+                    f'Check T prob: NumOfSampledStd {len(args.all_avg_prob)} Epoch {epoch}  MeanStd {std_str} MeanEntropy {entropy.mean().item():.6f}')
 
     # Return the average metrics
     return top1.avg, top5.avg, cls_losses.avg, kd_losses.avg, avg_prob_std.mean().item(), entropy.mean().item()
 
 
-def validate_distill(test_loader, nets, criterions, opt):
+def validate_distill(test_loader, nets, criterions, args):
     cls_losses = AverageMeter()
     kd_losses = AverageMeter()
     top1 = AverageMeter()
@@ -297,8 +300,8 @@ def validate_distill(test_loader, nets, criterions, opt):
         out_s = snet(img)
         out_t = tnet(img)
         cls_loss = criterionCls(out_s, target)
-        if opt.kd_mode in ['logits', 'st']:
-            kd_loss = criterionKD(out_s, out_t.detach()) * opt.lambda_kd
+        if args.kd_mode in ['logits', 'st']:
+            kd_loss = criterionKD(out_s, out_t.detach()) * args.lambda_kd
         else:
             raise Exception('Invalid kd mode...')
 

@@ -1,8 +1,8 @@
 import argparse
 import csv
-from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform, cifar100_identity_transform
-from dataset.cifar10 import get_cifar10_dataloaders, cifar10_simple_transform
-from dataset.synthetic import get_synset_dataloader_fulltrain, syn_to_cifar_transform
+from dataloader.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform, cifar100_identity_transform
+from dataloader.cifar10 import get_cifar10_dataloaders, cifar10_simple_transform
+from dataloader.synthetic import get_synset_dataloader_fulltrain, syn_to_cifar_transform
 import datetime
 from kd_losses import *
 import time

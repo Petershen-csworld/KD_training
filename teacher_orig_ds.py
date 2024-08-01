@@ -1,8 +1,8 @@
 import argparse
 import csv
-from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform
-from dataset.cifar10 import get_cifar10_dataloaders, cifar10_crop_flip_transform
-from dataset.bloodMNIST import get_bloodmnist_dataloaders, bloodmnist_crop_flip_transform
+from dataloader.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform
+from dataloader.cifar10 import get_cifar10_dataloaders, cifar10_crop_flip_transform
+from dataloader.bloodMNIST import get_bloodmnist_dataloaders, bloodmnist_crop_flip_transform
 
 import time
 import torch
@@ -20,238 +20,120 @@ import sys
 import wandb
 import pandas as pd
 import datetime
+from args import get_args
+from tqdm import tqdm
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-
-    # Random seed for reproducibility
-    parser.add_argument("--seed",
-                        type=int,
-                        default=34,
-                        help="The random seed.")
-
-    # Batch size for training
-    parser.add_argument("--batch_size",
-                        type=int,
-                        default=64,
-                        help="The batch size used for training.")
-
-    # Frequency of printing logs
-    parser.add_argument("--print_freq",
-                        type=int,
-                        default=100,
-                        help="The print frequency.")
-
-    # Dataset selection
-    parser.add_argument("--dataset",
-                        type=str,
-                        default="CIFAR100",
-                        help="CIFAR10/CIFAR100/Imagenet, Specify the dataset to train on.")
-
-    # Path to the dataset
-    parser.add_argument("--dataset_path",
-                        type=str,
-                        default="/home/shenhaoyu/dataset/pytorch_datasets",
-                        help="The place where dataset is stored.")
-
-    # Model name
-    parser.add_argument("--model_name",
-                        type=str,
-                        default="vgg13",
-                        help="TODO:CHANGE THIS TO CHOICE!")
-
-    # Number of training epochs
-    parser.add_argument("--epoch",
-                        type=int,
-                        default=240,
-                        help="Training epoch.")
-
-    # Optimizer type
-    parser.add_argument("--optimizer",
-                        type=str,
-                        default="SGD",
-                        help="The optimizer type.")
-
-    # Learning rate for the optimizer
-    parser.add_argument("--lr",
-                        type=float,
-                        default=0.05,
-                        help="The learning rate for optimizer.")
-
-    # Weight decay (L2 regularization term)
-    parser.add_argument("--weight_decay",
-                        type=float,
-                        default=5e-4,
-                        help="The weight decay(L2 regularization term) for optimizer.")
-
-    # Momentum for the optimizer
-    parser.add_argument("--momentum",
-                        type=float,
-                        default=0.9,
-                        help="The momentum for optimizer.")
-
-    # Epochs where learning rate should decay
-    parser.add_argument('--lr_decay_epochs',
-                        type=str,
-                        default='150,180,210',
-                        help='Where to decay lr, can be a list.')
-
-    # Decay rate for the learning rate
-    parser.add_argument('--lr_decay_rate',
-                        type=float,
-                        default=10,
-                        help='decay rate for learning rate.')
-
-    # Model saving path
-    parser.add_argument("--model_saving_path",
-                        type=str,
-                        default="/home/shenhaoyu/dataset/model_zoo/pretrained_teacher",
-                        help="The place for saving optimized model.")
-
-    # Logging saving path
-    parser.add_argument("--logging_saving_path",
-                        type=str,
-                        default="/home/shenhaoyu/dataset/logging",
-                        help="The place for saving logging.")
-
-    # Frequency of saving the model
-    parser.add_argument('--save_freq',
-                        type=int,
-                        default=40,
-                        help='Saving frequency')
-
-    # Augmentation type
-    parser.add_argument('--aug',
-                        type=str,
-                        default=None,
-                        help="Augmentation type")
-
-    # Parse the arguments
-    opt = parser.parse_args()
-    return opt
-
-# Function to set all random seeds for reproducibility
-
-
-def seed_everything(seed: int):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
-
-
-def main(opt: argparse.Namespace):
+def main(args: argparse.Namespace):
     # ======= configure logging =======
     logger = logging.getLogger(name=__name__)
     logger.setLevel(logging.INFO)
     stdout_handler = logging.StreamHandler(stream=sys.stdout)
     formatter = logging.Formatter("%(message)s")
     stdout_handler.setFormatter(formatter)
-    os.makedirs(opt.logging_saving_path, exist_ok=True)
+    os.makedirs(args.logging_saving_path, exist_ok=True)
     file_handler = logging.FileHandler(os.path.join(
-        opt.logging_saving_path, f"log_{opt.model_name}_{opt.dataset}.txt"), "w+")
+        args.logging_saving_path, f"log_{args.model_name}_{args.dataset}.txt"), "w+")
     file_handler.setFormatter(formatter)
     logger.addHandler(stdout_handler)
     logger.addHandler(file_handler)
-    logger.info(opt)
+    logger.info(args)
 
     # Set random seed
-    seed = opt.seed
+    seed = args.seed
     seed_everything(seed)
 
     # Timer for estimating training time
-    timer = Timer(opt.epoch)
+    timer = Timer(args.epoch)
     best_acc = 0
     best_acc_epoch = 0
 
     # Configuring wandb for tracking experiments
     config = {
         "task": "pretraining",
-        "seed": opt.seed,
-        "dataset": opt.dataset,
-        "model": opt.model_name,
-        "epoch": opt.epoch,
-        "lr": opt.lr,
-        "weight_decay": opt.weight_decay,
-        "momentum": opt.momentum,
-        "batch_size": opt.batch_size,
+        "seed": args.seed,
+        "dataset": args.dataset,
+        "model": args.model_name,
+        "epoch": args.epoch,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "momentum": args.momentum,
+        "batch_size": args.batch_size,
         "time": datetime.datetime.now()
     }
-    wandb.init(project=f"Pretraining Teacher Model {opt.model_name} {opt.dataset}",
+    wandb.init(project=f"Pretraining Teacher Model {args.model_name} {args.dataset}",
+               entity="windyyxz-Xihu University",
                config=config)
+    args.device = torch.device(f"cuda:{args.gpu}")  # 假设你想要使用索引为1的GPU
 
     # Load dataset and transformations
-    if opt.dataset == "CIFAR100":
+    if args.dataset == "CIFAR100":
         n_cls = 100
         img_size = 32
         simple_transform = cifar100_crop_flip_transform()
-        train_loader, test_loader = get_cifar100_dataloaders(opt.dataset_path,
+        train_loader, test_loader = get_cifar100_dataloaders(args.dataset_path,
                                                              train_transform=simple_transform,
                                                              test_transform=simple_transform,
-                                                             batch_size=opt.batch_size,
+                                                             batch_size=args.batch_size,
                                                              num_workers=8)
-    elif opt.dataset == "CIFAR10":
+    elif args.dataset == "CIFAR10":
         n_cls = 10
         img_size = 32
         simple_transform = cifar10_crop_flip_transform()
-        train_loader, test_loader = get_cifar10_dataloaders(opt.dataset_path,
+        train_loader, test_loader = get_cifar10_dataloaders(args.dataset_path,
                                                             train_transform=simple_transform,
                                                             test_transform=simple_transform,
-                                                            batch_size=opt.batch_size,
+                                                            batch_size=args.batch_size,
                                                             num_workers=8)
-    elif opt.dataset == "BloodMNIST":
+    elif args.dataset == "BloodMNIST":
         n_cls = 8
         img_size = 28
         simple_transform = bloodmnist_crop_flip_transform()
-        train_loader, test_loader = get_bloodmnist_dataloaders(opt.dataset_path,
+        train_loader, test_loader = get_bloodmnist_dataloaders(args.dataset_path,
                                                                train_transform=simple_transform,
                                                                test_transform=simple_transform,
-                                                               batch_size=opt.batch_size,
+                                                               batch_size=args.batch_size,
                                                                num_workers=8)
 
     else:
-        raise NotImplementedError(opt.dataset)
+        raise NotImplementedError(args.dataset)
 
     # Initialize model from the model dictionary
-    model = model_dict[opt.model_name](num_classes=n_cls, img_size=img_size)
+    model = model_dict[args.model_name](num_classes=n_cls, img_size=img_size)
 
     # ======= Set up the optimizer =======
-    if opt.optimizer == 'SGD':
+    if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(
             params=model.parameters(),
-            lr=opt.lr,
-            weight_decay=opt.weight_decay,
-            momentum=opt.momentum
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            momentum=args.momentum
         )
-    elif opt.optimizer == 'Adam':
+    elif args.optimizer == 'Adam':
         optimizer = torch.optim.Adam(
             params=model.parameters(),
-            lr=opt.lr,
-            weight_decay=opt.weight_decay,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
         )
     else:
-        raise NotImplementedError(opt.optimizer)
+        raise NotImplementedError(args.optimizer)
 
     # Loss function
     criterion = torch.nn.CrossEntropyLoss()
 
     # Move model and criterion to GPU if available
     if torch.cuda.is_available():
-        model = model.to("cuda")
-        criterion = criterion.cuda()
+        model = model.to(args.device)
+        criterion = criterion.to(args.device)
         cudnn.benchmark = True
 
     # Create directory for saving models if it does not exist
-    os.makedirs(opt.model_saving_path, exist_ok=True)
+    os.makedirs(args.model_saving_path, exist_ok=True)
 
     # ======= training! =======
-    for epoch in range(1, opt.epoch + 1):
+    for epoch in tqdm(range(1, args.epoch + 1), desc='training'):
         # Adjust learning rate according to schedule
-        adjust_learning_rate(epoch, opt, optimizer)
+        adjust_learning_rate(epoch, args, optimizer)
 
         for param_group in optimizer.param_groups:
             lr = param_group['lr']
@@ -262,13 +144,13 @@ def main(opt: argparse.Namespace):
 
         # Train for one epoch
         train_acc, train_loss = train(
-            epoch, train_loader, model, criterion, optimizer, opt)
+            epoch, train_loader, model, criterion, optimizer, args)
         time2 = time.time()
         logger.info('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
 
         # Validate the model
         test_acc, test_acc_top5, test_loss = validate(
-            test_loader, model, criterion, opt)
+            test_loader, model, criterion, args)
 
         # Save the best model
         if test_acc > best_acc:
@@ -281,12 +163,12 @@ def main(opt: argparse.Namespace):
                 'optimizer': optimizer.state_dict()
             }
             save_model_dir = os.path.join(
-                opt.model_saving_path, opt.model_name)
+                args.model_saving_path, args.model_name)
             os.makedirs(save_model_dir, exist_ok=True)
 
-            save_model = os.path.join(save_model_dir, '{}_{}_seed_{}best.pth'.format(opt.model_name,
-                                                                                     opt.dataset,
-                                                                                     opt.seed))
+            save_model = os.path.join(save_model_dir, '{}_{}_seed_{}best.pth'.format(args.model_name,
+                                                                                     args.dataset,
+                                                                                     args.seed))
             print('saving the best model!')
             torch.save(state, save_model)
 
@@ -302,7 +184,7 @@ def main(opt: argparse.Namespace):
         print('Predicted finish time: %s' % timer())
 
         # Regular saving
-        if epoch % opt.save_freq == 0:
+        if epoch % args.save_freq == 0:
             print('==> Saving...')
             state = {
                 'epoch': epoch,
@@ -311,9 +193,9 @@ def main(opt: argparse.Namespace):
                 'optimizer': optimizer.state_dict()
             }
 
-            save_ckpt = os.path.join(save_model_dir, '{}_{}_seed_{}_ckpt_epoch_{}.pth'.format(opt.model_name,
-                                                                                              opt.dataset,
-                                                                                              opt.seed,
+            save_ckpt = os.path.join(save_model_dir, '{}_{}_seed_{}_ckpt_epoch_{}.pth'.format(args.model_name,
+                                                                                              args.dataset,
+                                                                                              args.seed,
                                                                                               epoch))
             torch.save(state, save_ckpt)
 
@@ -332,8 +214,8 @@ def main(opt: argparse.Namespace):
                             "weight_decay", "dataset", "model_name", "best_acc"])
     with open(csv_path, 'a+', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
-        csvwriter.writerow([datetime.datetime.now(), opt.seed, opt.epoch, opt.lr,
-                           opt.weight_decay, opt.dataset, opt.model_name, best_acc.cpu().detach().item()])
+        csvwriter.writerow([datetime.datetime.now(), args.seed, args.epoch, args.lr,
+                           args.weight_decay, args.dataset, args.model_name, best_acc.cpu().detach().item()])
 
     # Finish wandb logging
     wandb.finish()
@@ -341,5 +223,5 @@ def main(opt: argparse.Namespace):
 
 # Entry point of the script
 if __name__ == "__main__":
-    opt = get_args()
-    main(opt)
+    args = get_args()
+    main(args)

@@ -1,6 +1,6 @@
 import argparse
 import csv
-from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform, cifar100_identiy_transform
+from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform, cifar100_identity_transform
 from dataset.cifar10 import get_cifar10_dataloaders, cifar10_simple_transform
 from dataset.synthetic import get_synset_dataloader_fulltrain, syn_to_cifar_transform
 import datetime
@@ -222,7 +222,7 @@ def main(opt: argparse.Namespace):
     if opt.dataset == "CIFAR100":
         n_cls = 100
         img_size = 32
-        simple_transform = cifar100_identiy_transform()
+        simple_transform = cifar100_identity_transform()
         syn_train_transform = syn_to_cifar_transform()
         _, test_loader = get_cifar100_dataloaders("./data",
                                                   train_transform=simple_transform,

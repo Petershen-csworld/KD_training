@@ -85,7 +85,7 @@ def cifar100_crop_flip_transform() -> transforms:
     return transforms.Compose(transform)
 
 
-def cifar100_identiy_transform() -> transforms:
+def cifar100_identity_transform() -> transforms:
     """
     Define a basic transformation for CIFAR-100 dataset with only normalization.
 

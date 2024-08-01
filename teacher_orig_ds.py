@@ -2,6 +2,7 @@ import argparse
 import csv
 from dataset.cifar100 import get_cifar100_dataloaders, cifar100_crop_flip_transform
 from dataset.cifar10 import get_cifar10_dataloaders, cifar10_crop_flip_transform
+from dataset.bloodMNIST import get_bloodmnist_dataloaders, bloodmnist_crop_flip_transform
 
 import time
 import torch
@@ -203,15 +204,15 @@ def main(opt: argparse.Namespace):
                                                             batch_size=opt.batch_size,
                                                             num_workers=8)
     elif opt.dataset == "BloodMNIST":
-        n_cls = 10
-        img_size = 32
-        simple_transform = cifar10_crop_flip_transform()
-        train_loader, test_loader = get_cifar10_dataloaders(opt.dataset_path,
-                                                            train_transform=simple_transform,
-                                                            test_transform=simple_transform,
-                                                            batch_size=opt.batch_size,
-                                                            num_workers=8)
-    
+        n_cls = 8
+        img_size = 28
+        simple_transform = bloodmnist_crop_flip_transform()
+        train_loader, test_loader = get_bloodmnist_dataloaders(opt.dataset_path,
+                                                               train_transform=simple_transform,
+                                                               test_transform=simple_transform,
+                                                               batch_size=opt.batch_size,
+                                                               num_workers=8)
+
     else:
         raise NotImplementedError(opt.dataset)
 
